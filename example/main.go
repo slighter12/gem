@@ -12,7 +12,7 @@ func main() {
 		sql := gem.New(&gem.Config{
 			Tool:              gem.Goose,
 			OutputPath:        "./example/export/goose",
-			KeepDroppedColumn: true,
+			KeepDroppedColumn: false,
 		})
 
 		sql.AddModels(
@@ -49,7 +49,7 @@ func main() {
 		sql := gem.New(&gem.Config{
 			Tool:              gem.GolangMigrate,
 			OutputPath:        "./example/export/go_migrate",
-			KeepDroppedColumn: true,
+			KeepDroppedColumn: false,
 		})
 
 		sql.AddModels(
@@ -68,7 +68,7 @@ func main() {
 			Tool:              gem.GolangMigrate,
 			QuoteChar:         '"',
 			OutputPath:        "./example/export/go_migrate_double_dash",
-			KeepDroppedColumn: true,
+			KeepDroppedColumn: false,
 		})
 
 		sql.AddModels(
@@ -86,7 +86,7 @@ func main() {
 		sql := gem.New(&gem.Config{
 			Tool:              gem.RawSQL,
 			OutputPath:        "./example/export/raw_sql",
-			KeepDroppedColumn: true,
+			KeepDroppedColumn: false,
 		})
 
 		sql.AddModels(
