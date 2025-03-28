@@ -72,7 +72,8 @@ func TestParseModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tableName, columns, indexes := parseModel(tt.model, tt.quoteChar)
+			quote := newQuote(tt.quoteChar)
+			tableName, columns, indexes := parseModel(tt.model, quote)
 
 			// Verify table name
 			if tableName != "users" {
@@ -168,7 +169,8 @@ func TestParseModelToSQLWithIndexes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			createTable, indexes, err := parseModelToSQLWithIndexes(tt.model, tt.quoteChar)
+			quote := newQuote(tt.quoteChar)
+			createTable, indexes, err := parseModelToSQLWithIndexes(tt.model, quote)
 			if err != nil {
 				t.Fatalf("Failed to parse model: %v", err)
 			}
@@ -189,7 +191,7 @@ func TestParseModelToSQLWithIndexes(t *testing.T) {
 			}
 
 			for _, col := range requiredColumns {
-				quotedCol := quote(col, tt.quoteChar)
+				quotedCol := quote.Wrap(col)
 				if !strings.Contains(createTable, quotedCol) {
 					t.Errorf("Missing column %s (quoted as %s)", col, quotedCol)
 				}
@@ -248,7 +250,8 @@ func TestQuote(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := quote(tt.input, tt.quoteChar)
+			quote := newQuote(tt.quoteChar)
+			got := quote.Wrap(tt.input)
 			if got != tt.want {
 				t.Errorf("quote() = %v, want %v", got, tt.want)
 			}
@@ -316,11 +319,12 @@ func TestParseField(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			quote := newQuote(tt.quoteChar)
 			field, found := testType.FieldByName(tt.field)
 			if !found {
 				t.Fatalf("Field %s not found", tt.field)
 			}
-			got := parseField(field, tt.quoteChar)
+			got := parseField(field, quote)
 
 			for _, want := range tt.contains {
 				if !strings.Contains(got, want) {

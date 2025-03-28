@@ -68,7 +68,7 @@ func main() {
 			Tool:              gem.GolangMigrate,
 			QuoteChar:         '"',
 			OutputPath:        "./example/export/go_migrate_double_dash",
-			KeepDroppedColumn: true,
+			KeepDroppedColumn: false,
 		})
 
 		sql.AddModels(

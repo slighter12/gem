@@ -79,6 +79,7 @@ func (c *Config) getExportDir() string {
 
 type migrator struct {
 	conf      *Config
+	quote     *quote
 	models    []interface{}
 	snapshots []*modelSnapshot
 }
@@ -86,8 +87,10 @@ type migrator struct {
 // New creates a new migrator instance with the given configuration.
 // If config is nil, default configuration values will be used.
 func New(config *Config) *migrator {
+	quote := newQuote(config.QuoteChar)
 	return &migrator{
 		conf:      config,
+		quote:     quote,
 		models:    make([]interface{}, 0),
 		snapshots: make([]*modelSnapshot, 0),
 	}
@@ -158,7 +161,7 @@ func (m *migrator) Generate() error {
 	for _, model := range m.models {
 		timestamp++
 
-		schema, indexes, err := parseModelToSQLWithIndexes(model, m.conf.QuoteChar)
+		schema, indexes, err := parseModelToSQLWithIndexes(model, m.quote)
 		if err != nil {
 			return fmt.Errorf("parse model, err: %w", err)
 		}
@@ -379,10 +382,10 @@ func (m *migrator) generateMigrationFileInfo(timestamp int64, tableName string, 
 			upFilename = fmt.Sprintf("%d_create_%s.sql", timestamp, tableName)
 			if len(indexes) == 0 {
 				upContent = fmt.Sprintf("-- +goose Up\n%s\n\n-- +goose Down\nDROP TABLE IF EXISTS %s;\n",
-					schema, quote(tableName, m.conf.QuoteChar))
+					schema, m.quote.Wrap(tableName))
 			} else {
 				upContent = fmt.Sprintf("-- +goose Up\n%s\n\n%s\n\n-- +goose Down\nDROP TABLE IF EXISTS %s;\n",
-					schema, joinStrings(indexes, "\n"), quote(tableName, m.conf.QuoteChar))
+					schema, joinStrings(indexes, "\n"), m.quote.Wrap(tableName))
 			}
 		case GolangMigrate:
 			upFilename = fmt.Sprintf("%d_create_%s.up.sql", timestamp, tableName)
@@ -393,7 +396,7 @@ func (m *migrator) generateMigrationFileInfo(timestamp int64, tableName string, 
 			}
 
 			downFilename = fmt.Sprintf("%d_create_%s.down.sql", timestamp, tableName)
-			downContent = fmt.Sprintf("DROP TABLE IF EXISTS %s;", quote(tableName, m.conf.QuoteChar))
+			downContent = fmt.Sprintf("DROP TABLE IF EXISTS %s;", m.quote.Wrap(tableName))
 		}
 	} else {
 		// Case of table modification
@@ -428,7 +431,7 @@ func (m *migrator) generateMigrationFileInfo(timestamp int64, tableName string, 
 
 func (m *migrator) generateAlterStatements(tableName string, newSchema string, newIndexes []string) (upStatements []string, downStatements []string) {
 	// Parse new schema
-	newDef, err := parseCreateTable(newSchema)
+	newDef, err := parseCreateTable(newSchema, m.quote)
 	if err != nil {
 		return []string{fmt.Sprintf("-- Error parsing new schema: %v", err)}, nil
 	}
@@ -439,7 +442,7 @@ func (m *migrator) generateAlterStatements(tableName string, newSchema string, n
 		return []string{fmt.Sprintf("-- Unable to find snapshot for table %s", tableName)}, nil
 	}
 
-	oldDef, err := parseCreateTable(snapshot.Schema)
+	oldDef, err := parseCreateTable(snapshot.Schema, m.quote)
 	if err != nil {
 		return []string{fmt.Sprintf("-- Error parsing old schema: %v", err)}, nil
 	}
@@ -497,12 +500,12 @@ func joinStrings(str []string, sep string) string {
 }
 
 // parseCreateTable parses CREATE TABLE statement
-func parseCreateTable(sql string) (*tableDef, error) {
+func parseCreateTable(sql string, quote *quote) (*tableDef, error) {
 	// Remove extra whitespace and newlines
 	sql = strings.TrimSpace(sql)
 
 	// Parse table name
-	tableNameRegex := regexp.MustCompile(`CREATE TABLE IF NOT EXISTS ` + "`" + `(\w+)` + "`" + ` \(([\s\S]+)\);`)
+	tableNameRegex := regexp.MustCompile(`CREATE TABLE IF NOT EXISTS ` + quote.RegexPattern() + ` \(([\s\S]+)\);`)
 	matches := tableNameRegex.FindStringSubmatch(sql)
 	if len(matches) != 3 {
 		return nil, fmt.Errorf("invalid CREATE TABLE syntax")
@@ -553,7 +556,7 @@ func parseCreateTable(sql string) (*tableDef, error) {
 			}
 
 			// Remove backticks from column name
-			columnName := strings.Trim(parts[0], "`")
+			columnName := quote.Unwrap(parts[0])
 
 			// Special handling for PRIMARY KEY definition
 			if strings.ToUpper(parts[0]) == "PRIMARY" && strings.ToUpper(parts[1]) == "KEY" {
@@ -713,17 +716,17 @@ func (m *migrator) compareColumns(tableName string, oldCols, newCols []columnDef
 				prevCol := sortedNewCols[i]
 				// 檢查前一個欄位是原有的或已在此操作中添加的
 				if _, prevExistsInOld := oldColMap[prevCol.Name]; prevExistsInOld || addedCols[prevCol.Name] {
-					positionClause = fmt.Sprintf("AFTER `%s`", prevCol.Name)
+					positionClause = fmt.Sprintf("AFTER %s", m.quote.Wrap(prevCol.Name))
 					break
 				}
 			}
 		}
 
 		operations = append(operations, alterOperation{
-			Up: fmt.Sprintf("ALTER TABLE `%s` ADD COLUMN `%s` %s %s %s;",
-				tableName, newCol.Name, newCol.Type, strings.Join(newCol.Constraints, " "), positionClause),
-			Down: fmt.Sprintf("ALTER TABLE `%s` DROP COLUMN `%s`;",
-				tableName, newCol.Name),
+			Up: fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s %s;",
+				m.quote.Wrap(tableName), m.quote.Wrap(newCol.Name), newCol.Type, strings.Join(newCol.Constraints, " "), positionClause),
+			Down: fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;",
+				m.quote.Wrap(tableName), m.quote.Wrap(newCol.Name)),
 		})
 
 		// 記錄此欄位已添加
@@ -735,10 +738,10 @@ func (m *migrator) compareColumns(tableName string, oldCols, newCols []columnDef
 		oldCol, exists := oldColMap[name]
 		if exists && !compareColumnDef(oldCol, newCol) {
 			operations = append(operations, alterOperation{
-				Up: fmt.Sprintf("ALTER TABLE `%s` MODIFY COLUMN `%s` %s %s;",
-					tableName, newCol.Name, newCol.Type, strings.Join(newCol.Constraints, " ")),
-				Down: fmt.Sprintf("ALTER TABLE `%s` MODIFY COLUMN `%s` %s %s;",
-					tableName, oldCol.Name, oldCol.Type, strings.Join(oldCol.Constraints, " ")),
+				Up: fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s %s %s;",
+					m.quote.Wrap(tableName), m.quote.Wrap(newCol.Name), newCol.Type, strings.Join(newCol.Constraints, " ")),
+				Down: fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s %s %s;",
+					m.quote.Wrap(tableName), m.quote.Wrap(oldCol.Name), oldCol.Type, strings.Join(oldCol.Constraints, " ")),
 			})
 		}
 	}
@@ -794,16 +797,16 @@ func (m *migrator) compareColumns(tableName string, oldCols, newCols []columnDef
 				prevColName := sortedOldCols[i].Name
 				// 檢查前一個欄位是否存在於新表或已在此 DOWN 操作中添加
 				if _, prevExistsInNew := newColMap[prevColName]; prevExistsInNew || addedColsInDown[prevColName] {
-					positionClause = fmt.Sprintf("AFTER `%s`", prevColName)
+					positionClause = fmt.Sprintf("AFTER %s", m.quote.Wrap(prevColName))
 					break
 				}
 			}
 
 			operations = append(operations, alterOperation{
-				Up: fmt.Sprintf("ALTER TABLE `%s` DROP COLUMN `%s`;",
-					tableName, oldCol.Name),
-				Down: fmt.Sprintf("ALTER TABLE `%s` ADD COLUMN `%s` %s %s %s;",
-					tableName, oldCol.Name, oldCol.Type, strings.Join(oldCol.Constraints, " "), positionClause),
+				Up: fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;",
+					m.quote.Wrap(tableName), m.quote.Wrap(oldCol.Name)),
+				Down: fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s %s %s;",
+					m.quote.Wrap(tableName), m.quote.Wrap(oldCol.Name), oldCol.Type, strings.Join(oldCol.Constraints, " "), positionClause),
 			})
 
 			// 記錄此欄位已在 DOWN 操作中添加
